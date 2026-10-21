@@ -45,46 +45,62 @@
     <div class="bar" aria-hidden="true"><b></b></div>
     <div class="time" id="tempo">Aguardando há 0:00</div>
     <div class="slow" id="lento">
-      <p>Está demorando mais do que o normal.</p>
-      <button onclick="location.reload()">Tentar novamente</button>
+      <p>Está demorando um pouco mais que o normal. Você será levado ao sistema automaticamente em instantes.</p>
+      <a id="abrir" href="#">Abrir o sistema agora</a>
+      <p class="time" id="diag" style="margin-top:14px"></p>
     </div>
-    <noscript><p style="margin-top:20px">Ative o JavaScript para continuar ou acesse diretamente: <a style="color:var(--coral)" href="https://sistema-xml.gctnet.com.br">abrir o sistema</a>.</p></noscript>
+    <noscript><p style="margin-top:20px">Ative o JavaScript para continuar ou acesse diretamente: <a style="color:var(--coral)" href="https://xml-fiscal.onrender.com">abrir o sistema</a>.</p></noscript>
   </div>
 </main>
 <footer>GCT – Gerenciamento e Controle de Trânsito · Ferramenta de uso interno</footer>
 <script>
-  // Endereço do sistema (Render). Altere aqui se usar outro domínio.
-  const APP_URL = 'https://sistema-xml.gctnet.com.br';
+  // Endereço do sistema (Render ou domínio próprio). Altere aqui se mudar.
+  const APP_URL = 'https://xml-fiscal.onrender.com';
+  const MOSTRAR_BOTAO_APOS = 45;   // segundos
+  const REDIRECIONAR_APOS = 90;    // segundos: segurança caso a verificação falhe
   const inicio = Date.now();
   const $ = id => document.getElementById(id);
-  let pronto = false;
+  let pronto = false, tentativas = 0, ultimo = '';
+  $('abrir').href = APP_URL;
+
+  function ir() {
+    if (pronto) return;
+    pronto = true;
+    $('titulo').textContent = 'Sistema pronto!';
+    $('texto').textContent = 'Redirecionando…';
+    setTimeout(() => location.replace(APP_URL), 300);
+  }
 
   setInterval(() => {
     const s = Math.floor((Date.now() - inicio) / 1000);
     $('tempo').textContent = 'Aguardando há ' + Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
-    if (s > 120) $('lento').style.display = 'block';
+    if (s >= MOSTRAR_BOTAO_APOS) {
+      $('lento').style.display = 'block';
+      $('diag').textContent = 'Verificações: ' + tentativas + (ultimo ? ' · último retorno: ' + ultimo : '');
+    }
+    if (s >= REDIRECIONAR_APOS) ir();
   }, 1000);
 
   async function verificar() {
+    tentativas++;
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), 8000);
     try {
-      const r = await fetch(APP_URL + '/ping?t=' + Date.now(), { cache: 'no-store', signal: ctrl.signal });
+      const r = await fetch(APP_URL + '/ping?t=' + Date.now(), { cache: 'no-store', credentials: 'omit', signal: ctrl.signal });
+      if (!(r.headers.get('content-type') || '').includes('json')) { ultimo = 'resposta sem JSON (HTTP ' + r.status + ')'; return false; }
       const j = await r.json();
-      return !!(j && j.ok);
-    } catch (e) { return false; }
-    finally { clearTimeout(t); }
+      if (j && j.ok) return true;
+      ultimo = 'resposta inesperada'; return false;
+    } catch (e) {
+      ultimo = e.name === 'AbortError' ? 'sem resposta em 8s' : 'falha de rede ou CORS';
+      console.warn('Verificação falhou:', e);
+      return false;
+    } finally { clearTimeout(t); }
   }
 
   (async function loop() {
     while (!pronto) {
-      if (await verificar()) {
-        pronto = true;
-        $('titulo').textContent = 'Sistema pronto!';
-        $('texto').textContent = 'Redirecionando…';
-        setTimeout(() => location.replace(APP_URL), 400);
-        return;
-      }
+      if (await verificar()) { ir(); return; }
       await new Promise(r => setTimeout(r, 3000));
     }
   })();
